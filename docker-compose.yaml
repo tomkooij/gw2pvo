@@ -4,5 +4,7 @@ services:
      build: .
      volumes:
        - ./gw2pvo.cfg:/gw2pvo.cfg
+     environment:
+       - TZ=Europe/Amsterdam
      restart: unless-stopped
  
