@@ -59,7 +59,7 @@ def run_once(settings, city):
             return
 
     # Fetch the last reading from GoodWe
-    gw = gw_api.GoodWeApi(settings.gw_station_id, settings.gw_account, settings.gw_password)
+    gw = gw_api.GoodWeApi(settings.gw_station_id, settings.gw_account, settings.gw_password, settings.gw_inverter_sn)
     data = gw.getCurrentReadings()
 
     # Check if we want to abort when offline
@@ -104,7 +104,7 @@ def copy(settings):
     # Fetch readings from GoodWe
     date = datetime.strptime(settings.date, "%Y-%m-%d")
 
-    gw = gw_api.GoodWeApi(settings.gw_station_id, settings.gw_account, settings.gw_password)
+    gw = gw_api.GoodWeApi(settings.gw_station_id, settings.gw_account, settings.gw_password, settings.gw_inverter_sn)
     data = gw.getDayReadings(date)
 
     if settings.pvo_system_id and settings.pvo_api_key:
@@ -158,6 +158,7 @@ def run():
     parser.add_argument("--gw-station-id", help="GoodWe station ID", metavar='ID')
     parser.add_argument("--gw-account", help="GoodWe account", metavar='ACCOUNT')
     parser.add_argument("--gw-password", help="GoodWe password", metavar='PASSWORD')
+    parser.add_argument("--gw-inverter-sn", help="GoodWe inverter serial number for live telemetry (default: $GW_INVERTER_SN)", metavar='SN')
     parser.add_argument("--pvo-system-id", help="PVOutput system ID", metavar='ID')
     parser.add_argument("--pvo-api-key", help="PVOutput API key", metavar='KEY')
     parser.add_argument("--pvo-interval", help="PVOutput interval in minutes", type=int, choices=[5, 10, 15])
@@ -193,7 +194,10 @@ def run():
     if args.city:
         city = Location(lookup(args.city, database()))
         os.environ['TZ'] = city.timezone
-        time.tzset()
+        if hasattr(time, 'tzset'):
+            time.tzset()
+        else:
+            logging.warning("Timezone switching is not supported on this platform; using the system timezone")
     else:
         city = None
     logging.debug("Timezone {}".format(datetime.now().astimezone().tzinfo))

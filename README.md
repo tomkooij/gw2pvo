@@ -1,6 +1,8 @@
 
 # gw2pvo
 
+> **Note:** This copy of gw2pvo works with the new GoodWe SEMS+ portal API. All changes compared to the original project were made by Claude Code.
+
 gw2pvo is a command line tool to upload solar data from a GoodWe power inverter to the PVOutput.org website.
 
 ## Installation
@@ -58,6 +60,8 @@ optional arguments:
   --gw-account ACCOUNT  GoodWe account
   --gw-password PASSWORD
                         GoodWe password
+  --gw-inverter-sn SN   GoodWe inverter serial number for live telemetry
+                        (default: $GW_INVERTER_SN)
   --pvo-system-id ID    PVOutput system ID
   --pvo-api-key KEY     PVOutput API key
   --pvo-interval {5,10,15}
@@ -110,6 +114,7 @@ It is more secure to define credentials in a config file instead of adding it to
 gw_station_id = ...
 gw_account = ...
 gw_password = ...
+gw_inverter_sn = ...
 
 pvo_api_key = ...
 pvo_system_id = ...
@@ -126,6 +131,12 @@ gw2pvo --config gw2pvo.cfg --log debug
 ```
 
 You can add any argument setting to the config file as you like.
+
+### Inverter serial number (SEMS+ API)
+
+This version talks to the new GoodWe SEMS+ API. The inverter serial number is required: set `gw_inverter_sn` (or `--gw-inverter-sn`) and gw2pvo reads live power, grid/PV voltage, temperature and today's/lifetime energy directly from that inverter. You can find the serial number in the SEMS+ app or web portal under your inverter's details.
+
+As a fallback, the serial number can also be given through the `GW_INVERTER_SN` environment variable. The config file or command line option takes precedence.
 
 ## Automatic uploads
 
@@ -179,6 +190,7 @@ Add all settings to config file named `gw2pvo.cfg` like:
 gw_station_id = ...
 gw_account = ...
 gw_password = ...
+gw_inverter_sn = ...
 
 pvo_api_key = ...
 pvo_system_id = ...
@@ -193,6 +205,20 @@ Do set `city` to a [valid value](https://astral.readthedocs.io/en/stable/index.h
 
 ```shell
 docker run --rm -v $(pwd)/gw2pvo.cfg:/gw2pvo.cfg gw2pvo
+```
+
+or use docker compose:
+
+
+```shell
+docker compose up -d
+```
+
+The inverter serial number can be set as `gw_inverter_sn` in `gw2pvo.cfg`. Alternatively, pass it as an environment variable, e.g. in `docker-compose.yaml`:
+
+```yaml
+environment:
+  - GW_INVERTER_SN=YOUR_INVERTER_SERIAL
 ```
 
 ## Recover missed data
