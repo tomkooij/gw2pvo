@@ -19,10 +19,9 @@ __email__ = "mark@paracas.nl"
 #      semsplus.goodwe.com web app sends; without them: "parameter error"),
 #   2. reads the per-minute system power curve from
 #      sems-plant/api/v1/hems/power/statisticsAndPreV2,
-#   3. if GW_INVERTER_SN is set, reads live power, grid/PV voltage and
-#      temperature from sems-plant/api/equipments/<sn>/telemetry, and
-#      today's/lifetime energy from .../<sn>/telecounting,
-#   4. otherwise derives power and today's energy from the power curve.
+#   3. reads live power, grid/PV voltage and temperature from
+#      sems-plant/api/equipments/<sn>/telemetry, and today's/lifetime energy
+#      from .../<sn>/telecounting (the inverter serial number is required).
 # The curve is also used to detect an offline inverter and for --date.
 
 LOGIN_URL = "https://semsplus.goodwe.com/web/sems/sems-user/api/v1/auth/cross-login"
@@ -31,14 +30,13 @@ POWER_CURVE_PATH = "/sems-plant/api/v1/hems/power/statisticsAndPreV2"
 TELEMETRY_PATH = "/sems-plant/api/equipments/{sn}/telemetry"
 TELECOUNTING_PATH = "/sems-plant/api/equipments/{sn}/telecounting"
 # Inverter serial number for live telemetry (power, voltages, temperature).
-# Set it with --gw-inverter-sn / gw_inverter_sn in gw2pvo.cfg, or in the
-# environment, e.g. GW_INVERTER_SN=YOUR_SERIAL (used as a fallback).
-# Without it only the power curve is used.
+# Required. Set it with --gw-inverter-sn / gw_inverter_sn in gw2pvo.cfg, or in
+# the environment, e.g. GW_INVERTER_SN=YOUR_SERIAL (used as a fallback).
 INVERTER_SN_ENV = "GW_INVERTER_SN"
 SUCCESS_CODES = ("0", "00000")
 
 # Power values from the curve are multiplied by this to get watts.
-POWER_SCALE_TO_W = 1
+POWER_SCALE_TO_W = 1000
 # A sample older than this means the inverter is not reporting.
 STALE_AFTER = timedelta(minutes=15)
 # Gaps in the curve longer than this are not integrated.
@@ -63,12 +61,16 @@ class GoodWeApi:
 
     def __init__(self, system_id, account, password, inverter_sn=None):
         self.inverter_sn = inverter_sn or os.environ.get(INVERTER_SN_ENV)
+        if not self.inverter_sn:
+            raise ValueError("GoodWe inverter serial number is required: set gw_inverter_sn, "
+                             "--gw-inverter-sn or ${}".format(INVERTER_SN_ENV))
         self.system_id = system_id
         self.account = account
         self.password = password
         self.uuid = str(uuid.uuid4())
         self.token_data = None
         self.api = None
+        self._power_curves = {}
 
     # ------------------------------------------------------------- helpers
 
@@ -158,7 +160,14 @@ class GoodWeApi:
     # ---------------------------------------------------------------- data
 
     def getPowerCurve(self, day):
-        ''' List of (datetime, watts) for the given day, null samples dropped. '''
+        ''' List of (datetime, watts) for the given day, null samples dropped.
+            Finished days are looked up in a per-session cache instead of
+            querying the API again; today is always fetched as it still grows. '''
+        if isinstance(day, datetime):
+            day = day.date()
+        cached = self._power_curves.get(day)
+        if cached is not None:
+            return list(cached)
         payload = {
             "stationId": self.system_id,
             "items": ["pSystem"],
@@ -181,7 +190,9 @@ class GoodWeApi:
                     continue
                 samples.append((tp, float(point["power"]) * POWER_SCALE_TO_W))
         samples.sort()
-        return samples
+        if day < date_cls.today():
+            self._power_curves[day] = samples
+        return list(samples)
 
     @staticmethod
     def _cumulative_kwh(samples):
@@ -195,7 +206,7 @@ class GoodWeApi:
                     kwh += (prev[1] + w) / 2 / 1000 * gap.total_seconds() / 3600
             prev = (tp, w)
             yield tp, w, kwh
-
+    
     def _get_factors(self, path_template, sn):
         ''' Equipment endpoints return groups of factors; flatten them to
             {code: (value, unit)}, numbers converted to float. '''
@@ -261,28 +272,22 @@ class GoodWeApi:
             'longitude': None,
         }
 
-        telemetry, counting = {}, {}
         sn = self.inverter_sn
-        if sn:
-            try:
-                counting = self.getTelecounting(sn)
-            except Exception as exp:
-                logging.warning("Telecounting unavailable, computing energy from power curve: %s", exp)
-            try:
-                telemetry = self.getTelemetry(sn)
-            except Exception as exp:
-                logging.warning("Telemetry unavailable: %s", exp)
-            if 'pAc' not in telemetry and 'pAc' in counting:
-                telemetry['pAc'] = counting['pAc']
+        telemetry = self.getTelemetry(sn)
+        try:
+            counting = self.getTelecounting(sn)
+        except Exception as exp:
+            logging.warning("Telecounting unavailable: %s", exp)
+            counting = {}
+        if 'pAc' not in telemetry and 'pAc' in counting:
+            telemetry['pAc'] = counting['pAc']
 
+        # The power curve is only used to tell whether the inverter is reporting
         samples = self.getPowerCurve(date_cls.today())
+        fresh = bool(samples) and datetime.now() - samples[-1][0] <= STALE_AFTER
 
         if 'pAc' in telemetry:
             live_w = self._to_watts(*telemetry['pAc'])
-            if samples and samples[-1][1] > 0 and POWER_SCALE_TO_W == 1:
-                self._detect_curve_scale(samples[-1][1], live_w)
-                if POWER_SCALE_TO_W != 1:
-                    samples = [(tp, w * POWER_SCALE_TO_W) for tp, w in samples]
             result['pgrid_w'] = round(live_w)
             result['status'] = 'Normal' if live_w > 0 else 'Waiting'
             if 'Vac' in telemetry:
@@ -293,18 +298,6 @@ class GoodWeApi:
             if 'Temperature' in telemetry:
                 result['temperature'] = telemetry['Temperature'][0]
 
-        if samples:
-            points = list(self._cumulative_kwh(samples))
-            last_tp, last_w, eday = points[-1]
-            result['eday_kwh'] = round(eday, 3)
-            fresh = datetime.now() - last_tp <= STALE_AFTER
-            if 'pAc' not in telemetry and fresh:
-                result['pgrid_w'] = round(last_w)
-                result['status'] = 'Normal' if last_w > 0 else 'Waiting'
-        else:
-            fresh = False
-
-        # Counters reported by the inverter beat our own integration
         if 'proPvStatsToday' in counting:
             result['eday_kwh'] = self._to_kwh(*counting['proPvStatsToday'])
         if 'proPvStatsTotal' in counting:

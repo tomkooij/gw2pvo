@@ -194,7 +194,10 @@ def run():
     if args.city:
         city = Location(lookup(args.city, database()))
         os.environ['TZ'] = city.timezone
-        time.tzset()
+        if hasattr(time, 'tzset'):
+            time.tzset()
+        else:
+            logging.warning("Timezone switching is not supported on this platform; using the system timezone")
     else:
         city = None
     logging.debug("Timezone {}".format(datetime.now().astimezone().tzinfo))

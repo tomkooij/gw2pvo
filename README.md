@@ -134,7 +134,7 @@ You can add any argument setting to the config file as you like.
 
 ### Inverter serial number (SEMS+ API)
 
-This version talks to the new GoodWe SEMS+ API. Without an inverter serial number, only the per-minute power curve of the plant is used: power and today's energy are derived from it. If you set `gw_inverter_sn` (or `--gw-inverter-sn`), gw2pvo also reads live power, grid/PV voltage, temperature and today's/lifetime energy directly from that inverter. You can find the serial number in the SEMS+ app or web portal under your inverter's details.
+This version talks to the new GoodWe SEMS+ API. The inverter serial number is required: set `gw_inverter_sn` (or `--gw-inverter-sn`) and gw2pvo reads live power, grid/PV voltage, temperature and today's/lifetime energy directly from that inverter. You can find the serial number in the SEMS+ app or web portal under your inverter's details.
 
 As a fallback, the serial number can also be given through the `GW_INVERTER_SN` environment variable. The config file or command line option takes precedence.
 
